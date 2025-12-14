@@ -1,176 +1,258 @@
-#!/usr/bin/env python3
 import os
 import tkinter as tk
+from tkinter import ttk
 
-LOADER_PATH = "C:/LOADER"
-SEPARATOR = "109823949587483902982345]#;/]#;/;#"
-os.makedirs(LOADER_PATH, exist_ok=True)
+# ---------- FILE SYSTEM ----------
+LOADER = "C:/LOADER"
+DISKS = os.path.join(LOADER, "DISKS")
+os.makedirs(DISKS, exist_ok=True)
 
-# ------------------ Create SYSLOADER files ------------------
-# SHELL50-BIT.SYSLOADER (GUI Start Menu)
-shell50_file = os.path.join(LOADER_PATH, "SHELL50-BIT.SYSLOADER")
-if not os.path.isfile(shell50_file):
-    shell50_code = [
-        "import tkinter as tk",
-        "from tkinter import messagebox",
-        "def launch_shell():",
-        "    messagebox.showinfo('Shell', 'Type shellcmd in emulator to start shell')",
-        "root = tk.Tk()",
-        "root.title('SHELL50-BIT START MENU')",
-        "root.geometry('400x300')",
-        "btn1 = tk.Button(root, text='Launch Shell', command=launch_shell)",
-        "btn1.pack(pady=20)",
-        "btn2 = tk.Button(root, text='Exit', command=root.destroy)",
-        "btn2.pack(pady=20)",
-        "root.mainloop()"
-    ]
-    with open(shell50_file, "w") as f:
-        f.write(SEPARATOR.join(shell50_code))
+# ---------- CPU & RAM SIMULATION ----------
+class CPU:
+    def __init__(self):
+        self.registers = {f"R{i}": 0 for i in range(8)}  # 8 registers
+        self.max_val = 2**50 - 1  # 50-bit max
 
-# SHELLCOMMANDSTYPE.SYSLOADER (Commands)
-shellcmd_file = os.path.join(LOADER_PATH, "SHELLCOMMANDSTYPE.SYSLOADER")
-if not os.path.isfile(shellcmd_file):
-    shellcmd_code = [
-        "COMMANDS = ['LOAD','RUN','MEM','REG','CLR','HELP','EXIT']",
-        "def execute_command(cmd, shell):",
-        "    c = cmd.upper()",
-        "    if c == 'HELP':",
-        "        shell.print_line('Available commands: ' + ', '.join(COMMANDS))",
-        "    elif c == 'CLR':",
-        "        shell.clear()",
-        "    elif c == 'EXIT':",
-        "        shell.root.destroy()",
-        "    else:",
-        "        shell.print_line(f'Executing command: {cmd}')"
-    ]
-    with open(shellcmd_file, "w") as f:
-        f.write(SEPARATOR.join(shellcmd_code))
+    def execute(self, instr, shell):
+        parts = instr.strip().split()
+        if not parts:
+            return
 
-# ------------------ Emulator with Canvas Shell ------------------
-class CanvasShell:
+        cmd = parts[0].upper()
+        if cmd == "MOV" and len(parts) == 3:
+            reg, val = parts[1].upper(), parts[2]
+            if reg in self.registers:
+                try:
+                    v = int(val)
+                    if 0 <= v <= self.max_val:
+                        self.registers[reg] = v
+                    else:
+                        shell.print(f"ERROR: Value out of 50-bit range")
+                except:
+                    shell.print(f"ERROR: Invalid value")
+            else:
+                shell.print(f"ERROR: Invalid register")
+        elif cmd in ("ADD","SUB") and len(parts) == 3:
+            r1, r2 = parts[1].upper(), parts[2].upper()
+            if r1 in self.registers and r2 in self.registers:
+                if cmd == "ADD":
+                    self.registers[r1] += self.registers[r2]
+                    if self.registers[r1] > self.max_val:
+                        self.registers[r1] = self.max_val
+                else:
+                    self.registers[r1] -= self.registers[r2]
+                    if self.registers[r1] < 0:
+                        self.registers[r1] = 0
+            else:
+                shell.print("ERROR: Invalid register")
+        elif cmd == "PRN" and len(parts) == 2:
+            reg = parts[1].upper()
+            if reg in self.registers:
+                shell.print(f"{reg} = {self.registers[reg]}")
+            else:
+                shell.print("ERROR: Invalid register")
+        else:
+            shell.print("ERROR: Invalid CPU command")
+
+class RAM:
+    def __init__(self):
+        self.size = 1024
+        self.mem = [0]*self.size
+
+    def load(self, addr, shell):
+        try:
+            addr = int(addr)
+            if 0 <= addr < self.size:
+                return self.mem[addr]
+            else:
+                shell.print("ERROR: Address out of range")
+                return None
+        except:
+            shell.print("ERROR: Invalid address")
+            return None
+
+    def store(self, addr, val, shell):
+        try:
+            addr = int(addr)
+            val = int(val)
+            if 0 <= addr < self.size:
+                self.mem[addr] = val & 0xFF
+            else:
+                shell.print("ERROR: Address out of range")
+        except:
+            shell.print("ERROR: Invalid address or value")
+
+# ---------- EMULATOR ----------
+class Emulator:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("SHELL50-BIT Emulator")
         self.root.geometry("1000x600")
 
-        self.canvas = tk.Canvas(self.root, bg="blue")
-        self.canvas.pack(fill=tk.BOTH, expand=True)
+        # Tabs
+        self.tabs = ttk.Notebook(self.root)
+        self.tabs.pack(fill="both", expand=True)
 
-        self.text_lines = []
-        self.max_lines = 30
-        self.line_height = 20
+        # SHELL TAB
+        self.shell_tab = tk.Frame(self.tabs)
+        self.tabs.add(self.shell_tab, text="SHELL")
+
+        self.canvas = tk.Canvas(self.shell_tab, bg="blue")
+        self.canvas.pack(fill="both", expand=True)
+
+        self.lines = []
+        self.input_buf = ""
+        self.prompt = "EMU> "
         self.font = ("Consolas", 12)
-        self.input_buffer = ""
-        self.cursor = "EMU> "
 
-        self.commands_loaded = False
-        self.commands_module = {}
+        # DISK tab state
+        self.disk_tab_created = False
 
-        self.root.bind("<Key>", self.on_key)
-        self.root.bind("<Return>", self.on_enter)
+        # CPU & RAM
+        self.cpu = CPU()
+        self.ram = RAM()
 
-        self.show_start_message()
+        self.root.bind("<Key>", self.key)
+        self.root.bind("<Return>", self.enter)
 
-    def show_start_message(self):
-        self.print_line("Welcome to SHELL50-BIT Emulator!")
-        self.print_line("Type 'shell50' to open Start Menu or 'shellcmd' to launch shell commands.")
-        self.print_prompt()
+        self.print("SHELL50-BIT READY")
+        self.print("Type DISK to create Disk Maker tab")
+        self.print("CPU commands: MOV, ADD, SUB, PRN")
+        self.print("RAM commands: LOAD, STORE, DUMP")
 
-    def print_line(self, text=""):
-        self.text_lines.append(text)
-        if len(self.text_lines) > self.max_lines:
-            self.text_lines = self.text_lines[-self.max_lines:]
-        self.redraw()
-
-    def print_prompt(self):
-        self.redraw()
-
-    def clear(self):
-        self.text_lines = []
+    # ---------- SHELL ----------
+    def print(self, text):
+        self.lines.append(text)
+        self.lines = self.lines[-30:]
         self.redraw()
 
     def redraw(self):
         self.canvas.delete("all")
         y = 5
-        for line in self.text_lines:
-            self.canvas.create_text(5, y, anchor="nw", text=line, fill="white", font=self.font)
-            y += self.line_height
-        # Draw input buffer
-        self.canvas.create_text(5, y, anchor="nw", text=self.cursor + self.input_buffer, fill="white", font=self.font)
+        for l in self.lines:
+            self.canvas.create_text(5, y, anchor="nw", text=l, fill="white", font=self.font)
+            y += 18
+        self.canvas.create_text(5, y, anchor="nw", text=self.prompt + self.input_buf, fill="white", font=self.font)
 
-    def on_key(self, event):
-        if event.keysym == "BackSpace":
-            self.input_buffer = self.input_buffer[:-1]
-        elif len(event.char) == 1:
-            self.input_buffer += event.char
+    def key(self, e):
+        if e.keysym == "BackSpace":
+            self.input_buf = self.input_buf[:-1]
+        elif len(e.char) == 1:
+            self.input_buf += e.char
         self.redraw()
 
-    def on_enter(self, event):
-        cmd = self.input_buffer.strip()
-        self.print_line(self.cursor + cmd)
-        self.input_buffer = ""
-        self.redraw()
+    def enter(self, e):
+        cmd = self.input_buf.strip()
+        self.print(self.prompt + cmd)
+        self.input_buf = ""
 
-        if cmd.lower() == "shell50":
-            self.launch_start_menu()
-        elif cmd.lower() == "shellcmd":
-            self.load_commands()
+        # ---- DISK TAB CREATOR ----
+        if cmd.upper() == "DISK":
+            self.create_disk_tab()
+        # ---- CPU commands ----
+        elif cmd.upper().split()[0] in ("MOV","ADD","SUB","PRN"):
+            self.cpu.execute(cmd, self)
+        # ---- RAM commands ----
+        elif cmd.upper().split()[0] == "LOAD":
+            parts = cmd.split()
+            if len(parts) == 2:
+                val = self.ram.load(parts[1], self)
+                if val is not None:
+                    self.print(f"RAM[{parts[1]}] = {val}")
+            else:
+                self.print("ERROR: LOAD addr")
+        elif cmd.upper().split()[0] == "STORE":
+            parts = cmd.split()
+            if len(parts) == 3:
+                self.ram.store(parts[1], parts[2], self)
+                self.print(f"Stored {parts[2]} at RAM[{parts[1]}]")
+            else:
+                self.print("ERROR: STORE addr value")
+        elif cmd.upper() == "DUMP":
+            self.print("RAM DUMP:")
+            for i in range(0, 1024, 16):
+                line = " ".join(f"{b:02X}" for b in self.ram.mem[i:i+16])
+                self.print(f"{i:03}: {line}")
+        # ---- HELP ----
+        elif cmd.upper() == "HELP":
+            self.print("Commands: DISK, MOV, ADD, SUB, PRN, LOAD, STORE, DUMP, HELP")
         else:
-            if self.commands_loaded:
-                self.execute_loaded_command(cmd)
-            else:
-                self.print_line("Unknown command. Type 'shellcmd' to load commands.")
-        self.print_prompt()
+            self.print("UNKNOWN COMMAND")
 
-    # ------------------ Start Menu ------------------
-    def launch_start_menu(self):
-        shell50_path = os.path.join(LOADER_PATH, "SHELL50-BIT.SYSLOADER")
-        if not os.path.isfile(shell50_path):
-            self.print_line("SHELL50-BIT.SYSLOADER not found!")
+        self.redraw()
+
+    # ---------- DISK TAB CREATOR ----------
+    def create_disk_tab(self):
+        if self.disk_tab_created:
+            self.tabs.select(self.disk_tab)
+            self.print("DISK TAB ALREADY CREATED")
             return
-        try:
-            with open(shell50_path, "r") as f:
-                content = f.read()
-            chunks = content.split(SEPARATOR)
-            code = "\n".join(chunks)
-            exec(code, {})
-        except Exception as e:
-            self.print_line(f"Error launching Start Menu: {e}")
 
-    # ------------------ Load Commands ------------------
-    def load_commands(self):
-        shellcmd_path = os.path.join(LOADER_PATH, "SHELLCOMMANDSTYPE.SYSLOADER")
-        if not os.path.isfile(shellcmd_path):
-            self.print_line("SHELLCOMMANDSTYPE.SYSLOADER not found!")
+        self.disk_tab_created = True
+        self.disk_tab = tk.Frame(self.tabs)
+        self.tabs.add(self.disk_tab, text="DISK")
+        self.tabs.select(self.disk_tab)
+
+        # ---------- IMG Maker ----------
+        tk.Label(self.disk_tab, text="IMG Maker (1 MB max)").pack(anchor="w", pady=(5,0))
+        tk.Label(self.disk_tab, text="File Path:").pack(anchor="w")
+        self.img_path = tk.Entry(self.disk_tab)
+        self.img_path.pack(fill="x", padx=5)
+
+        self.img_progress = ttk.Progressbar(self.disk_tab, length=300)
+        self.img_progress.pack(pady=5)
+
+        tk.Button(self.disk_tab, text="Create IMG", command=lambda: self.make_disk("IMG")).pack(pady=(0,10))
+
+        # ---------- FLP Maker ----------
+        tk.Label(self.disk_tab, text="FLP Maker (1 KB max)").pack(anchor="w", pady=(5,0))
+        tk.Label(self.disk_tab, text="File Path:").pack(anchor="w")
+        self.flp_path = tk.Entry(self.disk_tab)
+        self.flp_path.pack(fill="x", padx=5)
+
+        self.flp_progress = ttk.Progressbar(self.disk_tab, length=300)
+        self.flp_progress.pack(pady=5)
+
+        tk.Button(self.disk_tab, text="Create FLP", command=lambda: self.make_disk("FLP")).pack(pady=(0,10))
+
+        self.print("DISK TAB CREATED")
+
+    # ---------- CREATE DISK FUNCTION ----------
+    def make_disk(self, dtype):
+        if dtype == "IMG":
+            src = self.img_path.get()
+            limit = 1024*1024
+            bar = self.img_progress
+            ext = ".img"
+        else:
+            src = self.flp_path.get()
+            limit = 1024
+            bar = self.flp_progress
+            ext = ".flp"
+
+        if not os.path.isfile(src):
+            self.print(f"{dtype} ERROR: File not found")
             return
-        try:
-            with open(shellcmd_path, "r") as f:
-                content = f.read()
-            chunks = content.split(SEPARATOR)
-            code = "\n".join(chunks)
-            local_vars = {"shell": self}
-            exec(code, {}, local_vars)
-            self.commands_loaded = True
-            self.commands_module = local_vars
-            self.print_line("Command pack loaded. You can now type shell commands!")
-        except Exception as e:
-            self.print_line(f"Error loading commands: {e}")
 
-    # ------------------ Execute loaded commands ------------------
-    def execute_loaded_command(self, cmd):
-        try:
-            if "execute_command" in self.commands_module:
-                func = self.commands_module["execute_command"]
-                func(cmd, self)
-            else:
-                self.print_line("No execute_command function found.")
-        except Exception as e:
-            self.print_line(f"Error executing command: {e}")
+        out_file = os.path.join(DISKS, os.path.basename(src) + ext)
+        written = 0
+        bar["value"] = 0
+
+        with open(src, "rb") as f, open(out_file, "wb") as o:
+            while written < limit:
+                chunk = f.read(64)
+                if not chunk:
+                    break
+                o.write(chunk)
+                written += len(chunk)
+                bar["value"] = (written / limit) * 100
+                self.root.update()
+
+        self.print(f"{dtype} CREATED: {out_file}")
 
     def start(self):
         self.root.mainloop()
 
-# ------------------ Run Emulator ------------------
+# ---------- RUN ----------
 if __name__ == "__main__":
-    shell = CanvasShell()
-    shell.start()
+    Emulator().start()
