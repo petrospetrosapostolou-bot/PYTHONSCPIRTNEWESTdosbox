@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Create and Download File</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body { font-family: system-ui, Arial; padding: 20px; max-width: 800px; }
+    textarea { width: 100%; box-sizing: border-box; font-family: monospace; }
+    .note { color: #555; font-size: 0.9em; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <h1>Create a file and download</h1>
+  <p>Enter file contents below, choose a file type, then click "Create & Download". The browser will download the file — if you want it on your Desktop, move it there and run it yourself.</p>
+
+  <label for="type">File type:</label>
+  <select id="type">
+    <option value="txt">Text (.txt)</option>
+    <option value="bat">Windows Batch (.bat)</option>
+  </select>
+
+  <div style="margin-top:8px;">
+    <textarea id="content" rows="10">// Sample content for .txt or .bat.
+// For .bat you can put commands like:
+// @echo off
+// echo Hello from batch > "%USERPROFILE%\Desktop\hello.txt"
+// pause
+</textarea>
+  </div>
+
+  <div style="margin-top:8px;">
+    <button id="download">Create & Download</button>
+  </div>
+
+  <p class="note"><strong>Security note:</strong> Browsers do NOT allow webpages to write files directly to your Desktop or to execute programs automatically. The downloaded file must be saved and run by you. Only run scripts or executables that you trust.</p>
+
+  <script>
+    document.getElementById('download').addEventListener('click', function () {
+      const raw = document.getElementById('content').value;
+      const type = document.getElementById('type').value;
+      let filename = 'file.' + type;
+      let data = raw;
+      let mime = 'text/plain;charset=utf-8';
+
+      if (type === 'bat') {
+        // Convert to CRLF for Windows .bat files and give a reasonable name
+        data = raw.replace(/\n/g, '\r\n');
+        filename = 'script.bat';
+        // Use generic binary mime to avoid some browsers altering content
+        mime = 'application/octet-stream';
+      }
+
+      const blob = new Blob([data], { type: mime });
+      const url = URL.createObjectURL(blob);
+
+      const a = document.createElement('a');
+      a.style.display = 'none';
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+
+      // cleanup
+      setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }, 100);
+    });
+  </script>
+</body>
+</html>
