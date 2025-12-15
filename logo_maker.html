@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Simple Logo Maker</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body { font-family: system-ui, Arial; margin: 20px; max-width: 900px; }
+    label { display:block; margin-top:8px; font-weight:600; }
+    .controls { display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
+    .controls > * { min-width:160px; }
+    canvas { border:1px solid #ddd; background:transparent; display:block; margin-top:12px; }
+    .row { display:flex; gap:12px; align-items:center; margin-top:8px; }
+    button { padding:8px 12px; }
+    .small { font-size:0.9em; color:#555; }
+  </style>
+</head>
+<body>
+  <h1>Simple Logo Maker</h1>
+  <p class="small">Edit the options, preview updates automatically. Download as PNG or SVG.</p>
+
+  <div class="controls">
+    <div>
+      <label for="text">Logo text</label>
+      <input id="text" value="My Logo" />
+    </div>
+
+    <div>
+      <label for="font">Font</label>
+      <select id="font">
+        <option value="sans-serif">Sans</option>
+        <option value="serif">Serif</option>
+        <option value="monospace">Monospace</option>
+        <option value="cursive">Cursive</option>
+      </select>
+    </div>
+
+    <div>
+      <label for="size">Size (px)</label>
+      <input id="size" type="number" value="64" min="12" max="300" />
+    </div>
+
+    <div>
+      <label for="textColor">Text color</label>
+      <input id="textColor" type="color" value="#111111" />
+    </div>
+
+    <div>
+      <label for="bgColor">Background</label>
+      <input id="bgColor" type="color" value="#ffffff" />
+    </div>
+
+    <div>
+      <label for="shape">Shape</label>
+      <select id="shape">
+        <option value="none">None</option>
+        <option value="circle">Circle</option>
+        <option value="square">Square</option>
+      </select>
+    </div>
+
+    <div>
+      <label for="shapeColor">Shape color</label>
+      <input id="shapeColor" type="color" value="#ff7700" />
+    </div>
+  </div>
+
+  <div class="row">
+    <label for="padding">Padding (px)</label>
+    <input id="padding" type="number" value="24" min="0" max="200" />
+    <button id="downloadPng">Download PNG</button>
+    <button id="downloadSvg">Download SVG</button>
+    <button id="reset">Reset</button>
+  </div>
+
+  <canvas id="preview" width="512" height="256" aria-label="Logo preview"></canvas>
+
+  <script>
+    const el = id => document.getElementById(id);
+    const inputs = ['text','font','size','textColor','bgColor','shape','shapeColor','padding'];
+    const state = {};
+    const preview = el('preview');
+    const ctx = preview.getContext('2d');
+
+    function readState() {
+      inputs.forEach(k => state[k] = el(k).value);
+      state.size = Number(state.size) || 64;
+      state.padding = Number(state.padding) || 24;
+    }
+
+    function measureAndResize(text, font) {
+      // temporary measure with an offscreen canvas
+      const off = document.createElement('canvas');
+      const c = off.getContext('2d');
+      c.font = font;
+      const m = c.measureText(text);
+      const width = Math.ceil(m.width);
+      const height = Math.ceil(state.size * 1.2);
+      return { width, height };
+    }
+
+    function render() {
+      readState();
+      const font = `${state.size}px ${state.font}`;
+      const metrics = measureAndResize(state.text, font);
+      const canvasWidth = metrics.width + state.padding * 2 + 0;
+      const canvasHeight = metrics.height + state.padding * 2;
+
+      // Resize preview canvas (limit to avoid huge sizes)
+      const MAX = 2048;
+      preview.width = Math.min(canvasWidth, MAX);
+      preview.height = Math.min(canvasHeight, MAX);
+
+      // Clear and draw background
+      ctx.clearRect(0, 0, preview.width, preview.height);
+      ctx.fillStyle = state.bgColor || '#ffffff';
+      ctx.fillRect(0, 0, preview.width, preview.height);
+
+      // Optional shape
+      const centerX = preview.width / 2;
+      const centerY = preview.height / 2;
+      const shapeSize = Math.min(preview.width, preview.height) * 0.6;
+      if (state.shape !== 'none') {
+        ctx.fillStyle = state.shapeColor;
+        if (state.shape === 'circle') {
+          ctx.beginPath();
+          ctx.arc(centerX, centerY, shapeSize/2, 0, Math.PI*2);
+          ctx.fill();
+        } else if (state.shape === 'square') {
+          ctx.fillRect(centerX - shapeSize/2, centerY - shapeSize/2, shapeSize, shapeSize);
+        }
+      }
+
+      // Draw text centered
+      ctx.font = font;
+      ctx.fillStyle = state.textColor || '#000';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(state.text, centerX, centerY);
+    }
+
+    // Download helpers
+    function downloadDataUrl(dataUrl, filename) {
+      const a = document.createElement('a');
+      a.href = dataUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    }
+
+    function downloadPNG() {
+      render(); // ensure current state
+      const dataUrl = preview.toDataURL('image/png');
+      downloadDataUrl(dataUrl, (state.text || 'logo').replace(/\s+/g, '_') + '.png');
+    }
+
+    function downloadSVG() {
+      readState();
+      const svgWidth = Math.max(128, Math.min(2048, preview.width));
+      const svgHeight = Math.max(64, Math.min(2048, preview.height));
+      // Build simple SVG with optional shape and text
+      const shapeMarkup = (() => {
+        if (state.shape === 'circle') {
+          const r = Math.min(svgWidth, svgHeight) * 0.6 / 2;
+          return `<circle cx="${svgWidth/2}" cy="${svgHeight/2}" r="${r}" fill="${state.shapeColor}" />`;
+        } else if (state.shape === 'square') {
+          const s = Math.min(svgWidth, svgHeight) * 0.6;
+          return `<rect x="${(svgWidth-s)/2}" y="${(svgHeight-s)/2}" width="${s}" height="${s}" fill="${state.shapeColor}" />`;
+        }
+        return '';
+      })();
+
+      // Note: use basic fonts; consumers may need to embed fonts for exact look
+      const svg = `<?xml version="1.0" encoding="utf-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="${svgWidth}" height="${svgHeight}" viewBox="0 0 ${svgWidth} ${svgHeight}">
+  <rect width="100%" height="100%" fill="${state.bgColor}" />
+  ${shapeMarkup}
+  <text x="50%" y="50%" text-anchor="middle" dominant-baseline="middle" fill="${state.textColor}" font-family="${state.font}" font-size="${state.size}">${'${escapeXml(state.text)}'}</text>
+</svg>`;
+
+      const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      downloadDataUrl(url, (state.text || 'logo').replace(/\s+/g, '_') + '.svg');
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    }
+
+    function escapeXml(unsafe) {
+      return unsafe.replace(/[&<>
